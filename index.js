@@ -22,7 +22,6 @@ const USERS = {
 /* ---------- GAME STATE ---------- */
 let players = {};
 let bullets = {};
-let explosions = [];
 
 /* ---------- CLIENT HTML ---------- */
 const HTML = `
@@ -34,13 +33,14 @@ const HTML = `
 <style>
 body {
   margin:0;
-  background:#87ceeb;
+  background:black;
   font-family:Arial, Helvetica, sans-serif;
   overflow:hidden;
 }
 #loginBox {
   text-align:center;
   margin-top:200px;
+  color:white;
 }
 #score {
   position:absolute;
@@ -73,7 +73,8 @@ canvas {
 <script>
 const socket = io();
 let myId = null;
-let state = { players:{}, bullets:{}, explosions:[] };
+let state = { players:{}, bullets:{} };
+let mode = "day"; // day | night
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -118,6 +119,8 @@ canvas.addEventListener("mousemove", e => {
 
 document.addEventListener("keydown", e => {
   if (e.key === "ArrowUp") socket.emit("thrust");
+  if (e.key === "d" || e.key === "D") mode = "day";
+  if (e.key === "n" || e.key === "N") mode = "night";
 });
 
 canvas.addEventListener("click", () => socket.emit("shoot"));
@@ -125,14 +128,24 @@ canvas.addEventListener("click", () => socket.emit("shoot"));
 /* ---------- DRAW HELPERS ---------- */
 function drawSky() {
   const g = ctx.createLinearGradient(0,0,0,canvas.height);
-  g.addColorStop(0,"#6db3f2");
-  g.addColorStop(1,"#1e69de");
+
+  if (mode === "day") {
+    g.addColorStop(0,"#6db3f2");
+    g.addColorStop(1,"#1e69de");
+  } else {
+    g.addColorStop(0,"#020024");
+    g.addColorStop(1,"#090979");
+  }
+
   ctx.fillStyle = g;
   ctx.fillRect(0,0,canvas.width,canvas.height);
 }
 
 function drawClouds() {
-  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.fillStyle = mode === "day"
+    ? "rgba(255,255,255,0.8)"
+    : "rgba(200,200,255,0.3)";
+
   clouds.forEach(c => {
     ctx.beginPath();
     ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
@@ -150,13 +163,11 @@ function drawJet(p) {
   ctx.translate(p.x, p.y);
   ctx.rotate(p.angle + p.bank);
 
-  // body
   ctx.fillStyle = "#444";
   ctx.beginPath();
   ctx.ellipse(0,0,20,6,0,0,Math.PI*2);
   ctx.fill();
 
-  // wings
   ctx.fillStyle = p.team === "BLUE" ? "#3cf" : "#f33";
   ctx.beginPath();
   ctx.moveTo(-5,-2);
@@ -167,22 +178,11 @@ function drawJet(p) {
   ctx.closePath();
   ctx.fill();
 
-  // tail
-  ctx.beginPath();
-  ctx.moveTo(-18,0);
-  ctx.lineTo(-26,-6);
-  ctx.lineTo(-22,0);
-  ctx.lineTo(-26,6);
-  ctx.closePath();
-  ctx.fill();
-
-  // cockpit
   ctx.fillStyle = "#9ff";
   ctx.beginPath();
   ctx.ellipse(8,0,5,3,0,0,Math.PI*2);
   ctx.fill();
 
-  // engine flame
   ctx.fillStyle = "orange";
   ctx.beginPath();
   ctx.moveTo(-22,-3);
@@ -193,7 +193,6 @@ function drawJet(p) {
 
   ctx.restore();
 
-  // health
   ctx.fillStyle = "red";
   ctx.fillRect(p.x-20,p.y-22,40,4);
   ctx.fillStyle = "lime";
@@ -212,16 +211,11 @@ function draw() {
     ctx.fillRect(b.x,b.y,6,3);
   });
 
-  state.explosions.forEach(e => {
-    ctx.beginPath();
-    ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
-    ctx.fillStyle="rgba(255,140,0,"+(1-e.life)+")";
-    ctx.fill();
-  });
-
-  score.innerHTML = Object.values(state.players)
-    .map(p => p.name + " (" + p.team + ") : " + p.score)
-    .join("<br>");
+  score.innerHTML =
+    "<b>Mode:</b> " + mode.toUpperCase() + "<br><br>" +
+    Object.values(state.players)
+      .map(p => p.name + " (" + p.team + ") : " + p.score)
+      .join("<br>");
 
   requestAnimationFrame(draw);
 }
@@ -280,7 +274,8 @@ io.on("connection", socket => {
     const p = players[socket.id];
     if (p) {
       bullets[Date.now()+Math.random()] = {
-        x:p.x, y:p.y,
+        x:p.x,
+        y:p.y,
         angle:p.angle,
         owner:socket.id
       };
@@ -292,7 +287,6 @@ io.on("connection", socket => {
 
 /* ---------- GAME LOOP ---------- */
 setInterval(() => {
-
   for (const id in players) {
     const p = players[id];
     let d = p.targetAngle - p.angle;
@@ -321,12 +315,9 @@ setInterval(() => {
     }
   }
 
-  explosions.forEach(e => { e.r+=2; e.life+=0.05; });
-  explosions = explosions.filter(e => e.life < 1);
-
-  io.emit("state",{players,bullets,explosions});
+  io.emit("state",{players,bullets});
 },30);
 
 server.listen(3000, () => {
-  console.log("✈️ Jet Combat — FULL VISUAL VERSION RUNNING");
+  console.log("✈️ Jet Combat — Day/Night modes enabled");
 });
