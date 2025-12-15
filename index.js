@@ -6,10 +6,10 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
-/* ---------- GAME CONSTANTS ---------- */
+/* ---------- CONSTANTS ---------- */
 const WIDTH = 1200;
 const HEIGHT = 800;
-const JET_RADIUS = 15;
+const JET_RADIUS = 18;
 
 /* ---------- USERS ---------- */
 const USERS = {
@@ -30,21 +30,40 @@ const HTML = `
 <html>
 <head>
 <meta charset="utf-8">
-<title>Multiplayer Jet Combat</title>
+<title>Jet Combat</title>
 <style>
-body { margin:0; background:black; color:white; font-family:sans-serif; }
-canvas { display:block; margin:auto; background:#050b1a; cursor:crosshair; }
-#loginBox { text-align:center; margin-top:200px; }
-#score { position:absolute; top:10px; left:10px; }
+body {
+  margin:0;
+  background:#87ceeb;
+  font-family:Arial, Helvetica, sans-serif;
+  overflow:hidden;
+}
+#loginBox {
+  text-align:center;
+  margin-top:200px;
+}
+#score {
+  position:absolute;
+  top:10px;
+  left:10px;
+  color:white;
+  text-shadow:1px 1px 3px black;
+  font-size:14px;
+}
+canvas {
+  display:block;
+  margin:auto;
+  cursor:crosshair;
+}
 </style>
 </head>
 <body>
 
 <div id="loginBox">
-<h2>Jet Combat Login</h2>
-<input id="username" placeholder="username"><br><br>
-<input id="password" type="password" placeholder="password"><br><br>
-<button onclick="doLogin()">Login</button>
+  <h2>Jet Combat Login</h2>
+  <input id="username" placeholder="username"><br><br>
+  <input id="password" type="password" placeholder="password"><br><br>
+  <button onclick="doLogin()">Login</button>
 </div>
 
 <div id="score"></div>
@@ -56,88 +75,153 @@ const socket = io();
 let myId = null;
 let state = { players:{}, bullets:{}, explosions:[] };
 
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+/* ---------- CLOUDS ---------- */
+const clouds = [];
+for (let i = 0; i < 15; i++) {
+  clouds.push({
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height,
+    r: 40 + Math.random() * 60,
+    speed: 0.2 + Math.random() * 0.3
+  });
+}
+
+/* ---------- LOGIN ---------- */
 function doLogin() {
   socket.emit("login", {
-    username: document.getElementById("username").value,
-    password: document.getElementById("password").value
+    username: username.value,
+    password: password.value
   });
 }
 
 socket.on("login-success", id => {
   myId = id;
-  document.getElementById("loginBox").style.display = "none";
-  document.getElementById("game").style.display = "block";
+  loginBox.style.display = "none";
+  canvas.style.display = "block";
 });
 
 socket.on("login-fail", msg => alert(msg));
 socket.on("state", s => state = s);
 
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-
 /* ---------- INPUT ---------- */
-
-// mouse aiming
 canvas.addEventListener("mousemove", e => {
   if (!myId) return;
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  socket.emit("aim", { mx, my });
+  const r = canvas.getBoundingClientRect();
+  socket.emit("aim", {
+    mx: e.clientX - r.left,
+    my: e.clientY - r.top
+  });
 });
 
-// thrust
 document.addEventListener("keydown", e => {
-  if (!myId) return;
   if (e.key === "ArrowUp") socket.emit("thrust");
 });
 
-// shoot
 canvas.addEventListener("click", () => socket.emit("shoot"));
 
-/* ---------- DRAW ---------- */
-function draw() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+/* ---------- DRAW HELPERS ---------- */
+function drawSky() {
+  const g = ctx.createLinearGradient(0,0,0,canvas.height);
+  g.addColorStop(0,"#6db3f2");
+  g.addColorStop(1,"#1e69de");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+}
 
-  for (const id in state.players) {
-    const p = state.players[id];
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(p.angle + p.bank);
-
-    ctx.fillStyle = p.team === "BLUE" ? "cyan" : "red";
+function drawClouds() {
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  clouds.forEach(c => {
     ctx.beginPath();
-    ctx.moveTo(18,0);
-    ctx.lineTo(-12,-8);
-    ctx.lineTo(-6,0);
-    ctx.lineTo(-12,8);
-    ctx.closePath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
+    ctx.arc(c.x + c.r*0.6, c.y + 10, c.r*0.8, 0, Math.PI*2);
+    ctx.arc(c.x - c.r*0.6, c.y + 10, c.r*0.7, 0, Math.PI*2);
     ctx.fill();
-    ctx.restore();
 
-    // health bar
-    ctx.fillStyle = "red";
-    ctx.fillRect(p.x-12, p.y-22, 24, 4);
-    ctx.fillStyle = "lime";
-    ctx.fillRect(p.x-12, p.y-22, 24 * (p.hp/100), 4);
-  }
+    c.x += c.speed;
+    if (c.x - c.r > canvas.width) c.x = -c.r;
+  });
+}
+
+function drawJet(p) {
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(p.angle + p.bank);
+
+  // body
+  ctx.fillStyle = "#444";
+  ctx.beginPath();
+  ctx.ellipse(0,0,20,6,0,0,Math.PI*2);
+  ctx.fill();
+
+  // wings
+  ctx.fillStyle = p.team === "BLUE" ? "#3cf" : "#f33";
+  ctx.beginPath();
+  ctx.moveTo(-5,-2);
+  ctx.lineTo(-18,-12);
+  ctx.lineTo(-14,-2);
+  ctx.lineTo(-18,12);
+  ctx.lineTo(-5,2);
+  ctx.closePath();
+  ctx.fill();
+
+  // tail
+  ctx.beginPath();
+  ctx.moveTo(-18,0);
+  ctx.lineTo(-26,-6);
+  ctx.lineTo(-22,0);
+  ctx.lineTo(-26,6);
+  ctx.closePath();
+  ctx.fill();
+
+  // cockpit
+  ctx.fillStyle = "#9ff";
+  ctx.beginPath();
+  ctx.ellipse(8,0,5,3,0,0,Math.PI*2);
+  ctx.fill();
+
+  // engine flame
+  ctx.fillStyle = "orange";
+  ctx.beginPath();
+  ctx.moveTo(-22,-3);
+  ctx.lineTo(-30,0);
+  ctx.lineTo(-22,3);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+
+  // health
+  ctx.fillStyle = "red";
+  ctx.fillRect(p.x-20,p.y-22,40,4);
+  ctx.fillStyle = "lime";
+  ctx.fillRect(p.x-20,p.y-22,40*(p.hp/100),4);
+}
+
+/* ---------- DRAW LOOP ---------- */
+function draw() {
+  drawSky();
+  drawClouds();
+
+  Object.values(state.players).forEach(drawJet);
 
   ctx.fillStyle = "yellow";
   Object.values(state.bullets).forEach(b => {
-    ctx.fillRect(b.x, b.y, 6, 3);
+    ctx.fillRect(b.x,b.y,6,3);
   });
 
   state.explosions.forEach(e => {
     ctx.beginPath();
-    ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(255,120,0,"+(1-e.life)+")";
+    ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+    ctx.fillStyle="rgba(255,140,0,"+(1-e.life)+")";
     ctx.fill();
   });
 
-  document.getElementById("score").innerHTML =
-    Object.values(state.players)
-      .map(p => p.name + " (" + p.team + ") : " + p.score)
-      .join("<br>");
+  score.innerHTML = Object.values(state.players)
+    .map(p => p.name + " (" + p.team + ") : " + p.score)
+    .join("<br>");
 
   requestAnimationFrame(draw);
 }
@@ -152,10 +236,10 @@ app.get("/", (_, res) => res.type("html").send(HTML));
 /* ---------- SOCKET LOGIC ---------- */
 io.on("connection", socket => {
 
-  socket.on("login", ({username, password}) => {
+  socket.on("login", ({username,password}) => {
     const u = USERS[username];
     if (!u || u.password !== password) {
-      socket.emit("login-fail", "Invalid credentials");
+      socket.emit("login-fail","Invalid credentials");
       return;
     }
 
@@ -169,13 +253,11 @@ io.on("connection", socket => {
       team: u.team,
       x: Math.random()*(WIDTH-2*JET_RADIUS)+JET_RADIUS,
       y: Math.random()*(HEIGHT-2*JET_RADIUS)+JET_RADIUS,
-      vx: 0,
-      vy: 0,
-      angle: 0,
-      targetAngle: 0,
-      bank: 0,
-      hp: 100,
-      score: 0
+      vx:0, vy:0,
+      angle:0, targetAngle:0,
+      bank:0,
+      hp:100,
+      score:0
     };
 
     socket.emit("login-success", socket.id);
@@ -183,26 +265,26 @@ io.on("connection", socket => {
 
   socket.on("aim", ({mx,my}) => {
     const p = players[socket.id];
-    if (!p) return;
-    p.targetAngle = Math.atan2(my - p.y, mx - p.x);
+    if (p) p.targetAngle = Math.atan2(my - p.y, mx - p.x);
   });
 
   socket.on("thrust", () => {
     const p = players[socket.id];
-    if (!p) return;
-    p.vx += Math.cos(p.angle) * 0.6;
-    p.vy += Math.sin(p.angle) * 0.6;
+    if (p) {
+      p.vx += Math.cos(p.angle)*0.6;
+      p.vy += Math.sin(p.angle)*0.6;
+    }
   });
 
   socket.on("shoot", () => {
     const p = players[socket.id];
-    if (!p) return;
-    bullets[Date.now()+Math.random()] = {
-      x: p.x,
-      y: p.y,
-      angle: p.angle,
-      owner: socket.id
-    };
+    if (p) {
+      bullets[Date.now()+Math.random()] = {
+        x:p.x, y:p.y,
+        angle:p.angle,
+        owner:socket.id
+      };
+    }
   });
 
   socket.on("disconnect", () => delete players[socket.id]);
@@ -210,14 +292,13 @@ io.on("connection", socket => {
 
 /* ---------- GAME LOOP ---------- */
 setInterval(() => {
+
   for (const id in players) {
     const p = players[id];
-
-    // smooth rotation toward mouse
-    let diff = p.targetAngle - p.angle;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    p.angle += diff * 0.15;
-    p.bank = -diff * 0.8;
+    let d = p.targetAngle - p.angle;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    p.angle += d * 0.15;
+    p.bank = -d * 0.8;
 
     p.x += p.vx;
     p.y += p.vy;
@@ -232,43 +313,20 @@ setInterval(() => {
 
   for (const id in bullets) {
     const b = bullets[id];
-    const o = players[b.owner];
-    if (!o) { delete bullets[id]; continue; }
+    b.x += Math.cos(b.angle)*6;
+    b.y += Math.sin(b.angle)*6;
 
-    b.x += Math.cos(b.angle) * 6;
-    b.y += Math.sin(b.angle) * 6;
-
-    if (b.x<0||b.x>WIDTH||b.y<0||b.y>HEIGHT) {
+    if (b.x < 0 || b.x > WIDTH || b.y < 0 || b.y > HEIGHT) {
       delete bullets[id];
-      continue;
-    }
-
-    for (const pid in players) {
-      const t = players[pid];
-      if (t.team === o.team) continue;
-
-      if (Math.hypot(b.x - t.x, b.y - t.y) < JET_RADIUS) {
-        t.hp -= 30;
-        o.score++;
-        explosions.push({x:t.x,y:t.y,r:5,life:0});
-        delete bullets[id];
-
-        if (t.hp <= 0) {
-          t.hp = 100;
-          t.x = Math.random()*(WIDTH-2*JET_RADIUS)+JET_RADIUS;
-          t.y = Math.random()*(HEIGHT-2*JET_RADIUS)+JET_RADIUS;
-        }
-        break;
-      }
     }
   }
 
   explosions.forEach(e => { e.r+=2; e.life+=0.05; });
   explosions = explosions.filter(e => e.life < 1);
 
-  io.emit("state", {players, bullets, explosions});
-}, 30);
+  io.emit("state",{players,bullets,explosions});
+},30);
 
-server.listen(3000, "0.0.0.0", () => {
-  console.log("✈️ Jet Combat — mouse-aim enabled");
+server.listen(3000, () => {
+  console.log("✈️ Jet Combat — FULL VISUAL VERSION RUNNING");
 });
