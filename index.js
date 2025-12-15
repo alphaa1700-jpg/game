@@ -33,7 +33,7 @@ const HTML = `
 <title>Multiplayer Jet Combat</title>
 <style>
 body { margin:0; background:black; color:white; font-family:sans-serif; }
-canvas { display:block; margin:auto; background:#050b1a; }
+canvas { display:block; margin:auto; background:#050b1a; cursor:crosshair; }
 #loginBox { text-align:center; margin-top:200px; }
 #score { position:absolute; top:10px; left:10px; }
 </style>
@@ -75,17 +75,27 @@ socket.on("state", s => state = s);
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-/* INPUT */
+/* ---------- INPUT ---------- */
+
+// mouse aiming
+canvas.addEventListener("mousemove", e => {
+  if (!myId) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  socket.emit("aim", { mx, my });
+});
+
+// thrust
 document.addEventListener("keydown", e => {
   if (!myId) return;
   if (e.key === "ArrowUp") socket.emit("thrust");
-  if (e.key === "ArrowLeft") socket.emit("turn", -0.08);
-  if (e.key === "ArrowRight") socket.emit("turn", 0.08);
 });
 
+// shoot
 canvas.addEventListener("click", () => socket.emit("shoot"));
 
-/* DRAW */
+/* ---------- DRAW ---------- */
 function draw() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
@@ -149,22 +159,20 @@ io.on("connection", socket => {
       return;
     }
 
-    // allow reconnect
     for (const id in players) {
-      if (players[id].username === username) {
-        delete players[id];
-      }
+      if (players[id].username === username) delete players[id];
     }
 
     players[socket.id] = {
       username,
       name: u.name,
       team: u.team,
-      x: Math.random() * (WIDTH - 2*JET_RADIUS) + JET_RADIUS,
-      y: Math.random() * (HEIGHT - 2*JET_RADIUS) + JET_RADIUS,
+      x: Math.random()*(WIDTH-2*JET_RADIUS)+JET_RADIUS,
+      y: Math.random()*(HEIGHT-2*JET_RADIUS)+JET_RADIUS,
       vx: 0,
       vy: 0,
       angle: 0,
+      targetAngle: 0,
       bank: 0,
       hp: 100,
       score: 0
@@ -173,11 +181,10 @@ io.on("connection", socket => {
     socket.emit("login-success", socket.id);
   });
 
-  socket.on("turn", a => {
+  socket.on("aim", ({mx,my}) => {
     const p = players[socket.id];
     if (!p) return;
-    p.angle += a;
-    p.bank = -a * 2;
+    p.targetAngle = Math.atan2(my - p.y, mx - p.x);
   });
 
   socket.on("thrust", () => {
@@ -198,30 +205,31 @@ io.on("connection", socket => {
     };
   });
 
-  socket.on("disconnect", () => {
-    delete players[socket.id];
-  });
+  socket.on("disconnect", () => delete players[socket.id]);
 });
 
 /* ---------- GAME LOOP ---------- */
 setInterval(() => {
-  // player physics + boundary clamp
   for (const id in players) {
     const p = players[id];
+
+    // smooth rotation toward mouse
+    let diff = p.targetAngle - p.angle;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    p.angle += diff * 0.15;
+    p.bank = -diff * 0.8;
 
     p.x += p.vx;
     p.y += p.vy;
 
-    // boundary restriction
-    p.x = Math.max(JET_RADIUS, Math.min(WIDTH - JET_RADIUS, p.x));
-    p.y = Math.max(JET_RADIUS, Math.min(HEIGHT - JET_RADIUS, p.y));
+    p.x = Math.max(JET_RADIUS, Math.min(WIDTH-JET_RADIUS, p.x));
+    p.y = Math.max(JET_RADIUS, Math.min(HEIGHT-JET_RADIUS, p.y));
 
     p.vx *= 0.98;
     p.vy *= 0.98;
     p.bank *= 0.9;
   }
 
-  // bullets
   for (const id in bullets) {
     const b = bullets[id];
     const o = players[b.owner];
@@ -230,8 +238,7 @@ setInterval(() => {
     b.x += Math.cos(b.angle) * 6;
     b.y += Math.sin(b.angle) * 6;
 
-    // remove bullets out of frame
-    if (b.x < 0 || b.x > WIDTH || b.y < 0 || b.y > HEIGHT) {
+    if (b.x<0||b.x>WIDTH||b.y<0||b.y>HEIGHT) {
       delete bullets[id];
       continue;
     }
@@ -248,21 +255,20 @@ setInterval(() => {
 
         if (t.hp <= 0) {
           t.hp = 100;
-          t.x = Math.random() * (WIDTH - 2*JET_RADIUS) + JET_RADIUS;
-          t.y = Math.random() * (HEIGHT - 2*JET_RADIUS) + JET_RADIUS;
+          t.x = Math.random()*(WIDTH-2*JET_RADIUS)+JET_RADIUS;
+          t.y = Math.random()*(HEIGHT-2*JET_RADIUS)+JET_RADIUS;
         }
         break;
       }
     }
   }
 
-  explosions.forEach(e => { e.r += 2; e.life += 0.05; });
+  explosions.forEach(e => { e.r+=2; e.life+=0.05; });
   explosions = explosions.filter(e => e.life < 1);
 
   io.emit("state", {players, bullets, explosions});
 }, 30);
 
-/* ---------- START ---------- */
 server.listen(3000, "0.0.0.0", () => {
-  console.log("✈️ Jet Combat — bigger map + boundary restricted");
+  console.log("✈️ Jet Combat — mouse-aim enabled");
 });
